@@ -15,7 +15,6 @@ async def receiving_server(request):
     while True:
         try:
             raw_data = await ws.get_message()
-            # print(json.loads(bus_data))
             bus_data = json.loads(raw_data)
             buses['buses'].append(bus_data)
             logger.info(
