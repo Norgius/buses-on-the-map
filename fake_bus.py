@@ -1,5 +1,6 @@
 import json
 import logging
+from functools import wraps
 from contextlib import suppress
 from sys import stderr
 from random import randint, choice
@@ -7,7 +8,7 @@ from itertools import cycle, islice
 
 import trio
 import asyncclick as click
-from trio_websocket import open_websocket_url
+from trio_websocket import open_websocket_url, ConnectionClosed, HandshakeError
 
 from load_routes import load_routes
 
@@ -42,6 +43,22 @@ async def run_bus(send_channel, bus_id, route, refresh_timeout):
         await trio.sleep(refresh_timeout)
 
 
+def relaunch_on_disconnect(async_function):
+    @wraps(async_function)
+    async def wrapper(*args, **kwargs):
+        while True:
+            try:
+                await async_function(*args, **kwargs)
+            except HandshakeError:
+                logger.warning('Server is down')
+                await trio.sleep(5)
+            except ConnectionClosed:
+                logger.warning('Lost connection with server')
+                await trio.sleep(5)
+    return wrapper
+
+
+@relaunch_on_disconnect
 async def send_updates(server_address, receive_channel):
     async with open_websocket_url(server_address) as ws:
 
@@ -66,27 +83,27 @@ async def main(server_address, routes_number, buses_per_route,
     logger.setLevel(logging.INFO)
     logger.disabled = not log
     logger.info('Start')
-    print(refresh_timeout)
-    try:
-        send_channels, receive_channels = [], []
-        for _ in range(websockets_number):
-            send_channel, receive_channel = trio.open_memory_channel(5)
-            receive_channels.append(receive_channel)
-            send_channels.append(send_channel)
+    while True:
+        try:
+            send_channels, receive_channels = [], []
+            for _ in range(websockets_number):
+                send_channel, receive_channel = trio.open_memory_channel(5)
+                receive_channels.append(receive_channel)
+                send_channels.append(send_channel)
 
-        async with trio.open_nursery() as nursery:
-            for num, route in enumerate(load_routes(), 0):
-                if num >= routes_number:
-                    break
-                for _ in range(buses_per_route):
-                    bus_index = randint(0, len(route['coordinates']) - 1)
-                    bus_id = generate_bus_id(route['name'], bus_index, emulator_id)
-                    nursery.start_soon(run_bus, choice(send_channels), bus_id, route, refresh_timeout)
-            for receive_channel in receive_channels:
-                nursery.start_soon(send_updates, server_address, receive_channel)
+            async with trio.open_nursery() as nursery:
+                for num, route in enumerate(load_routes(), 0):
+                    if num >= routes_number:
+                        break
+                    for _ in range(buses_per_route):
+                        bus_index = randint(0, len(route['coordinates']) - 1)
+                        bus_id = generate_bus_id(route['name'], bus_index, emulator_id)
+                        nursery.start_soon(run_bus, choice(send_channels), bus_id, route, refresh_timeout)
+                for receive_channel in receive_channels:
+                    nursery.start_soon(send_updates, server_address, receive_channel)
 
-    except OSError as ose:
-        logger.warning('Connection attempt failed: %s' % ose, file=stderr)
+        except OSError as ose:
+            logger.warning('Connection attempt failed: %s' % ose, file=stderr)
 
 
 if __name__ == '__main__':
