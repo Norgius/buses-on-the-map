@@ -50,13 +50,13 @@ async def send_updates(server_address, receive_channel):
 
 
 @click.command()
-@click.option('--server_address', default='ws://127.0.0.1:8080', help='Адрес сервера')
-@click.option('--routes_number', default=500, help='Количество маршрутов')
-@click.option('--buses_per_route', default=5, help='Количество автобусов на каждом маршруте')
-@click.option('--websockets_number', default=1, help='Количество открытых веб-сокетов')
-@click.option('--emulator_id', default='', help='Префикс к busId')
-@click.option('--refresh_timeout', default=1, help='Задержка в обновлении координат')
-@click.option('--log', default=True, help='Настройка логирования')
+@click.option('-s', '--server_address', default='ws://127.0.0.1:8080', help='Адрес сервера')
+@click.option('-r', '--routes_number', default=500, help='Количество маршрутов')
+@click.option('-b', '--buses_per_route', default=5, help='Количество автобусов на каждом маршруте')
+@click.option('-w', '--websockets_number', default=1, help='Количество открытых веб-сокетов')
+@click.option('-e', '--emulator_id', default='', help='Префикс к busId')
+@click.option('-t', '--refresh_timeout', default=1.0, help='Задержка в обновлении координат')
+@click.option('-l', '--log', is_flag=True, default=False, help='Настройка логирования')
 async def main(server_address, routes_number, buses_per_route,
                websockets_number, emulator_id, refresh_timeout, log):
     logging.basicConfig(
@@ -65,7 +65,8 @@ async def main(server_address, routes_number, buses_per_route,
     )
     logger.setLevel(logging.INFO)
     logger.disabled = not log
-
+    logger.info('Start')
+    print(refresh_timeout)
     try:
         send_channels, receive_channels = [], []
         for _ in range(websockets_number):
