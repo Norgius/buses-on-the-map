@@ -9,12 +9,15 @@ import trio
 from trio_websocket import serve_websocket, ConnectionClosed
 
 logger = logging.getLogger(__name__)
+buses = {}
 
 
 @dataclass
 class Bus:
-    msgType: str = 'Buses'
-    buses: list = None
+    busId: str
+    lat: float
+    lng: float
+    route: str
 
 
 @dataclass
@@ -31,16 +34,19 @@ class WindowBounds:
                 self.west_lng < lng < self.east_lng:
             return True
 
-
-bounds = WindowBounds()
-buses_on_screen = Bus(buses=[])
+    def update(self, south_lat, north_lat, west_lng, east_lng):
+        self.south_lat = south_lat
+        self.north_lat = north_lat
+        self.west_lng = west_lng
+        self.east_lng = east_lng
 
 
 async def server_for_browser(request):
     ws = await request.accept()
+    bounds = WindowBounds()
     async with trio.open_nursery() as nursery:
-        nursery.start_soon(listen_browser, ws)
-        nursery.start_soon(send_buses, ws)
+        nursery.start_soon(listen_browser, ws, bounds)
+        nursery.start_soon(send_buses, ws, bounds)
 
 
 async def receiving_server(request):
@@ -49,42 +55,42 @@ async def receiving_server(request):
         try:
             raw_data = await ws.get_message()
             bus_data = json.loads(raw_data)
-            if bounds.is_inside(bus_data['lat'], bus_data['lng']):
-                buses_on_screen.buses.append(bus_data)
+            bus = Bus(**bus_data)
+            buses[bus.busId] = bus
         except ConnectionClosed:
             logger.warning('Lost connection with client')
             break
 
 
-async def listen_browser(ws):
+async def listen_browser(ws, bounds):
     while True:
         try:
             message = await ws.get_message()
             message = json.loads(message)
-            global bounds
-            bounds = WindowBounds(*message.get('data').values())
+            bounds.update(*message.get('data').values())
             logger.debug(message)
         except ConnectionClosed:
-            logger.warning('Browser page closed')
             break
 
 
-async def send_buses(ws):
+async def send_buses(ws, bounds):
     while True:
         try:
-            global bounds
-            global buses_on_screen
+            buses_on_screen = [
+                asdict(bus) for bus in buses.values()
+                if bounds.is_inside(bus.lat, bus.lng)
+            ]
+
             past_bounds = bounds
             await trio.sleep(1)
-            await ws.send_message(
-                json.dumps(asdict(buses_on_screen), ensure_ascii=False)
-            )
+            await ws.send_message(json.dumps(
+                {'msgType': 'Buses', 'buses': buses_on_screen},
+                ensure_ascii=False
+            ))
+
             if past_bounds != bounds:
                 logger.debug(f'{len(buses_on_screen.buses)} buses inside bounds')
-            buses_on_screen.buses = []
         except ConnectionClosed:
-            buses_on_screen.buses = []
-            bounds = WindowBounds()
             logger.warning('Browser page closed')
             break
 
