@@ -5,6 +5,7 @@ from dataclasses import dataclass, asdict
 from contextlib import suppress
 from functools import partial
 
+import asyncclick as click
 import trio
 from trio_websocket import serve_websocket, ConnectionClosed
 
@@ -95,12 +96,17 @@ async def send_buses(ws, bounds):
             break
 
 
-async def main():
+@click.command()
+@click.option('-b', '--bus_port', default=8080, help='Адрес сервера клиента')
+@click.option('-br', '--browser_port', default=8000, help='Адрес сервера браузера')
+@click.option('-l', '--log', is_flag=True, default=False, help='Настройка логирования')
+async def main(bus_port, browser_port, log):
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
     )
     logger.setLevel(logging.DEBUG)
+    logger.disabled = not log
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(
@@ -108,7 +114,7 @@ async def main():
                 serve_websocket,
                 receiving_server,
                 '127.0.0.1',
-                8080,
+                bus_port,
                 ssl_context=None
             )
         )
@@ -117,7 +123,7 @@ async def main():
                 serve_websocket,
                 server_for_browser,
                 '127.0.0.1',
-                8000,
+                browser_port,
                 ssl_context=None
             )
         )
@@ -126,4 +132,4 @@ async def main():
 
 if __name__ == '__main__':
     with suppress(KeyboardInterrupt):
-        trio.run(main)
+        main(_anyio_backend="trio")
