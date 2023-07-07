@@ -4,8 +4,10 @@ import logging
 import trio
 from trio_websocket import open_websocket_url
 
+logger = logging.getLogger('test_client')
 errors = [
-    {'errors': ['Requires valid JSON'], 'msgType': 'Errors'},
+    {'errors': ['Requires type JSON'], 'msgType': 'Errors'},
+    {'errors': ['Requires valid coords'], 'msgType': 'Errors'},
     {'errors': ['Requires msgType specified'], 'msgType': 'Errors'}
 ]
 
@@ -17,12 +19,12 @@ async def test_client():
             await ws.send_message('hello world!')
             response = await ws.get_message()
             if json.loads(response) == errors[0]:
-                print('1-ая проверка пройдена')
+                logger.info('1-ая проверка пройдена')
 
             await ws.send_message(json.dumps({'some_data': '111newBounds'}))
             response = await ws.get_message()
-            if json.loads(response) == errors[1]:
-                print('2-ая проверка пройдена')
+            if json.loads(response) == errors[2]:
+                logger.info('2-ая проверка пройдена')
 
             invalid_message = {
                 'msgType': 'newBounds',
@@ -36,7 +38,7 @@ async def test_client():
             await ws.send_message(json.dumps(invalid_message))
             response = await ws.get_message()
             if json.loads(response) == errors[1]:
-                print('3-ая проверка пройдена')
+                logger.info('3-ая проверка пройдена')
 
             invalid_message = {
                 'msgType': 'newBounds',
@@ -45,7 +47,7 @@ async def test_client():
             await ws.send_message(json.dumps(invalid_message))
             response = await ws.get_message()
             if json.loads(response) == errors[1]:
-                print('4-ая проверка пройдена')
+                logger.info('4-ая проверка пройдена')
 
             valid_message = {
                 'msgType': 'newBounds',
@@ -59,10 +61,16 @@ async def test_client():
             await ws.send_message(json.dumps(valid_message))
             response = await ws.get_message()
             if 'errors' not in json.loads(response):
-                print('5-ая проверка пройдена')
+                logger.info('5-ая проверка пройдена')
 
     except OSError as ose:
-        logging.error('Connection attempt failed: %s', ose)
+        logger.error('Connection attempt failed: %s', ose)
 
 
-trio.run(test_client)
+if __name__ == '__main__':
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
+    logger.setLevel(logging.DEBUG)
+    trio.run(test_client)
