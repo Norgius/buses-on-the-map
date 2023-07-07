@@ -9,12 +9,12 @@ import asyncclick as click
 import trio
 from trio_websocket import serve_websocket, ConnectionClosed
 
+from custom_exceptions import (InvalidRouteError,
+                               MessageTypeError,
+                               InvalidCoordsError)
+
 logger = logging.getLogger(__name__)
 buses = {}
-
-
-class InvalidJSON(Exception):
-    pass
 
 
 @dataclass
@@ -54,49 +54,95 @@ async def server_for_browser(request):
         nursery.start_soon(send_buses, ws, bounds)
 
 
+def check_bus_message(message):
+    try:
+        message = json.loads(message)
+        busId = message.get('busId')
+        if busId is None or not isinstance(busId, str):
+            raise MessageTypeError
+
+        route = message.get('route')
+        if route is None or not isinstance(route, str):
+            raise InvalidRouteError
+
+        valid_coords = {
+            'lat': (-90, 90),
+            'lng': (-180, 180),
+        }
+        for line, valid_coords in valid_coords.items():
+            coord_in_message = message.get(line)
+            if coord_in_message is None or \
+                    not isinstance(coord_in_message, (float, int)):
+                raise InvalidCoordsError
+            elif not valid_coords[0] <= coord_in_message <= valid_coords[1]:
+                raise InvalidCoordsError
+        return message
+
+    except json.JSONDecodeError:
+        logger.warning('JSONDecodeError')
+        return {'errors': ['Requires type JSON'], 'msgType': 'Errors'}
+    except InvalidCoordsError:
+        logger.warning('CoordsError')
+        return {'errors': ['Requires valid coords'], 'msgType': 'Errors'}
+    except InvalidRouteError:
+        logger.warning('InvalidRouteError')
+        return {'errors': ['Requires valid route'], 'msgType': 'Errors'}
+    except MessageTypeError:
+        logger.warning('MessageTypeError')
+        return {'errors': ['Requires busId specified'], 'msgType': 'Errors'}
+
+
 async def receiving_server(request):
     ws = await request.accept()
     while True:
         try:
-            raw_data = await ws.get_message()
-            bus_data = json.loads(raw_data)
-            bus = Bus(**bus_data)
+            message = await ws.get_message()
+            message = check_bus_message(message)
+            if 'errors' in message:
+                await ws.send_message(json.dumps(message, ensure_ascii=False))
+                continue
+            bus = Bus(**message)
             buses[bus.busId] = bus
         except ConnectionClosed:
-            logger.warning('Lost connection with client')
+            logger.warning('Lost connection with bus data')
             break
 
 
-def validate_browser_message(message):
+def check_browser_message(message):
     try:
         message = json.loads(message)
-        if message.get('msgType') is None and message.get('msgType') != 'newBounds':
-            raise InvalidJSON
-        if not message.get('data') or not isinstance(message.get('data'), dict):
-            raise InvalidJSON
+        msgType = message.get('msgType')
+        if msgType is None or msgType != 'newBounds':
+            raise MessageTypeError
+
+        message_data = message.get('data')
+        if message_data is None or not isinstance(message_data, dict):
+            raise InvalidCoordsError
 
         coords_in_message = message.get('data')
         valid_coords = {
             'south_lat': (-90, 90),
             'north_lat': (-90, 90),
             'west_lng': (-180, 180),
-            'east_lng': (-180, 180)
+            'east_lng': (-180, 180),
         }
         for direction, valid_coords in valid_coords.items():
             coord_in_message = coords_in_message.get(direction)
             if coord_in_message is None or \
                     not isinstance(coord_in_message, (float, int)):
-                raise InvalidJSON
-
+                raise InvalidCoordsError
             elif not valid_coords[0] <= coord_in_message <= valid_coords[1]:
-                raise InvalidJSON
+                raise InvalidCoordsError
         return message
 
     except json.JSONDecodeError:
         logger.warning('JSONDecodeError')
-        return {'errors': ['Requires valid JSON'], 'msgType': 'Errors'}
-    except InvalidJSON:
+        return {'errors': ['Requires type JSON'], 'msgType': 'Errors'}
+    except InvalidCoordsError:
         logger.warning('InvalidJSON')
+        return {'errors': ['Requires valid coords'], 'msgType': 'Errors'}
+    except MessageTypeError:
+        logger.warning('MessageTypeError')
         return {'errors': ['Requires msgType specified'], 'msgType': 'Errors'}
 
 
@@ -104,7 +150,7 @@ async def listen_browser(ws, bounds):
     while True:
         try:
             message = await ws.get_message()
-            message = validate_browser_message(message)
+            message = check_browser_message(message)
             if 'errors' in message:
                 await ws.send_message(json.dumps(message, ensure_ascii=False))
                 continue
