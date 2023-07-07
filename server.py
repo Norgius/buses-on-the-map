@@ -82,7 +82,7 @@ def check_bus_message(message):
         logger.warning('JSONDecodeError')
         return {'errors': ['Requires type JSON'], 'msgType': 'Errors'}
     except InvalidCoordsError:
-        logger.warning('CoordsError')
+        logger.warning('InvalidCoordsError')
         return {'errors': ['Requires valid coords'], 'msgType': 'Errors'}
     except InvalidRouteError:
         logger.warning('InvalidRouteError')
@@ -139,7 +139,7 @@ def check_browser_message(message):
         logger.warning('JSONDecodeError')
         return {'errors': ['Requires type JSON'], 'msgType': 'Errors'}
     except InvalidCoordsError:
-        logger.warning('InvalidJSON')
+        logger.warning('InvalidCoordsError')
         return {'errors': ['Requires valid coords'], 'msgType': 'Errors'}
     except MessageTypeError:
         logger.warning('MessageTypeError')
