@@ -8,6 +8,7 @@ from itertools import cycle, islice
 
 import trio
 import asyncclick as click
+from trio import MemoryReceiveChannel, MemorySendChannel
 from trio_websocket import open_websocket_url, ConnectionClosed, HandshakeError
 
 from load_routes import load_routes
@@ -15,16 +16,19 @@ from load_routes import load_routes
 logger = logging.getLogger(__name__)
 
 
-def generate_bus_id(route_id, bus_index, emulator_id):
+def generate_bus_id(route_id: str, bus_index: str, emulator_id: str) -> str:
     bus_id = f"{route_id}-{bus_index}"
     if emulator_id:
         bus_id = f'{emulator_id}_{bus_id}'
     return bus_id
 
 
-async def run_bus(send_channel, bus_id, route, refresh_timeout):
+async def run_bus(send_channel: MemorySendChannel,
+                  bus_id: str,
+                  route: dict,
+                  refresh_timeout: float):
 
-    def prepare_bus_data(coords):
+    def prepare_bus_data(coords: tuple) -> dict:
         bus_data = {
                     "busId": bus_id,
                     "lat": coords[0],
@@ -59,7 +63,8 @@ def relaunch_on_disconnect(async_function):
 
 
 @relaunch_on_disconnect
-async def send_updates(server_address, receive_channel):
+async def send_updates(server_address: str,
+                       receive_channel: MemoryReceiveChannel):
     async with open_websocket_url(server_address) as ws:
 
         async for value in receive_channel:
@@ -68,14 +73,19 @@ async def send_updates(server_address, receive_channel):
 
 @click.command()
 @click.option('-s', '--server_address', default='ws://127.0.0.1:8080', help='Адрес сервера')
-@click.option('-r', '--routes_number', default=500, help='Количество маршрутов')
-@click.option('-b', '--buses_per_route', default=5, help='Количество автобусов на каждом маршруте')
-@click.option('-w', '--websockets_number', default=1, help='Количество открытых веб-сокетов')
+@click.option('-r', '--routes_number', default=500, help='Кол-во маршрутов')
+@click.option('-b', '--buses_per_route', default=3, help='Кол-во автобусов на каждом маршруте')
+@click.option('-w', '--websockets_number', default=1, help='Кол-во открытых веб-сокетов')
 @click.option('-e', '--emulator_id', default='', help='Префикс к busId')
 @click.option('-t', '--refresh_timeout', default=1.0, help='Задержка в обновлении координат')
 @click.option('-l', '--log', is_flag=True, default=False, help='Настройка логирования')
-async def main(server_address, routes_number, buses_per_route,
-               websockets_number, emulator_id, refresh_timeout, log):
+async def main(server_address: str,
+               routes_number: int,
+               buses_per_route: int,
+               websockets_number: int,
+               emulator_id: str,
+               refresh_timeout: float,
+               log: bool):
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
@@ -98,7 +108,9 @@ async def main(server_address, routes_number, buses_per_route,
                     for _ in range(buses_per_route):
                         bus_index = randint(0, len(route['coordinates']) - 1)
                         bus_id = generate_bus_id(route['name'], bus_index, emulator_id)
-                        nursery.start_soon(run_bus, choice(send_channels), bus_id, route, refresh_timeout)
+                        nursery.start_soon(
+                            run_bus, choice(send_channels), bus_id, route, refresh_timeout
+                        )
                 for receive_channel in receive_channels:
                     nursery.start_soon(send_updates, server_address, receive_channel)
 

@@ -7,7 +7,10 @@ from functools import partial
 
 import asyncclick as click
 import trio
-from trio_websocket import serve_websocket, ConnectionClosed
+from trio_websocket import (serve_websocket,
+                            ConnectionClosed,
+                            WebSocketRequest,
+                            WebSocketConnection)
 
 from custom_exceptions import (InvalidRouteError,
                                MessageTypeError,
@@ -46,15 +49,7 @@ class WindowBounds:
         self.east_lng = east_lng
 
 
-async def server_for_browser(request):
-    ws = await request.accept()
-    bounds = WindowBounds()
-    async with trio.open_nursery() as nursery:
-        nursery.start_soon(listen_browser, ws, bounds)
-        nursery.start_soon(send_buses, ws, bounds)
-
-
-def check_bus_message(message):
+def check_bus_message(message: str) -> dict:
     try:
         message = json.loads(message)
         busId = message.get('busId')
@@ -92,7 +87,7 @@ def check_bus_message(message):
         return {'errors': ['Requires busId specified'], 'msgType': 'Errors'}
 
 
-async def receiving_server(request):
+async def receiving_server(request: WebSocketRequest):
     ws = await request.accept()
     while True:
         try:
@@ -108,7 +103,7 @@ async def receiving_server(request):
             break
 
 
-def check_browser_message(message):
+def check_browser_message(message: str) -> dict:
     try:
         message = json.loads(message)
         msgType = message.get('msgType')
@@ -146,7 +141,7 @@ def check_browser_message(message):
         return {'errors': ['Requires msgType specified'], 'msgType': 'Errors'}
 
 
-async def listen_browser(ws, bounds):
+async def listen_browser(ws: WebSocketConnection, bounds: WindowBounds):
     while True:
         try:
             message = await ws.get_message()
@@ -160,7 +155,7 @@ async def listen_browser(ws, bounds):
             break
 
 
-async def send_buses(ws, bounds):
+async def send_buses(ws: WebSocketConnection, bounds: WindowBounds):
     while True:
         try:
             buses_on_screen = [
@@ -182,11 +177,25 @@ async def send_buses(ws, bounds):
             break
 
 
+async def server_for_browser(request: WebSocketRequest):
+    ws = await request.accept()
+    bounds = WindowBounds()
+    async with trio.open_nursery() as nursery:
+        nursery.start_soon(listen_browser, ws, bounds)
+        nursery.start_soon(send_buses, ws, bounds)
+
+
 @click.command()
-@click.option('-b', '--bus_port', default=8080, help='Адрес сервера клиента')
-@click.option('-br', '--browser_port', default=8000, help='Адрес сервера браузера')
+@click.option('-ba', '--bus_address', default='127.0.0.1', help='Адрес сервера для автобусов')
+@click.option('-bra', '--browser_address', default='127.0.0.1', help='Адрес сервера для клиента')
+@click.option('-b', '--bus_port', default=8080, help='Порт сервера для автобусов')
+@click.option('-br', '--browser_port', default=8000, help='Порт сервера для клиента')
 @click.option('-l', '--log', is_flag=True, default=False, help='Настройка логирования')
-async def main(bus_port, browser_port, log):
+async def main(bus_address: str,
+               browser_address: str,
+               bus_port: int,
+               browser_port: int,
+               log: bool):
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         level=logging.INFO
@@ -199,7 +208,7 @@ async def main(bus_port, browser_port, log):
             partial(
                 serve_websocket,
                 receiving_server,
-                '127.0.0.1',
+                bus_address,
                 bus_port,
                 ssl_context=None
             )
@@ -208,7 +217,7 @@ async def main(bus_port, browser_port, log):
             partial(
                 serve_websocket,
                 server_for_browser,
-                '127.0.0.1',
+                browser_address,
                 browser_port,
                 ssl_context=None
             )
