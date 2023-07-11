@@ -3,7 +3,6 @@ import logging
 from typing import Union
 from dataclasses import dataclass, asdict
 from contextlib import suppress
-from functools import partial
 
 import asyncclick as click
 import trio
@@ -205,22 +204,18 @@ async def main(bus_address: str,
 
     async with trio.open_nursery() as nursery:
         nursery.start_soon(
-            partial(
                 serve_websocket,
                 receiving_server,
                 bus_address,
                 bus_port,
-                ssl_context=None
-            )
+                None
         )
         nursery.start_soon(
-            partial(
                 serve_websocket,
                 server_for_browser,
                 browser_address,
                 browser_port,
-                ssl_context=None
-            )
+                None
         )
         logger.info('Server started')
 
