@@ -69,13 +69,14 @@ async def send_updates(server_address: str,
 
         async for value in receive_channel:
             await ws.send_message(json.dumps(value))
+            await ws.get_message()
 
 
 @click.command()
 @click.option('-s', '--server_address', default='ws://127.0.0.1:8080', help='Адрес сервера')
 @click.option('-r', '--routes_number', default=500, help='Кол-во маршрутов')
 @click.option('-b', '--buses_per_route', default=3, help='Кол-во автобусов на каждом маршруте')
-@click.option('-w', '--websockets_number', default=1, help='Кол-во открытых веб-сокетов')
+@click.option('-w', '--websockets_number', default=3, help='Кол-во открытых веб-сокетов')
 @click.option('-e', '--emulator_id', default='', help='Префикс к busId')
 @click.option('-t', '--refresh_timeout', default=1.0, help='Задержка в обновлении координат')
 @click.option('-l', '--log', is_flag=True, default=False, help='Настройка логирования')
@@ -95,25 +96,25 @@ async def main(server_address: str,
     logger.info('Start')
     while True:
         try:
-            send_channels, receive_channels = [], []
-            for _ in range(websockets_number):
-                send_channel, receive_channel = trio.open_memory_channel(5)
-                receive_channels.append(receive_channel)
-                send_channels.append(send_channel)
-
+            memory_channels = [trio.open_memory_channel(0) for _ in range(websockets_number)]
             async with trio.open_nursery() as nursery:
-                for num, route in enumerate(load_routes(), 0):
-                    if num >= routes_number:
-                        break
+                for route in load_routes(routes_number):
+                    send_channel, receive_channel = choice(memory_channels)
                     for _ in range(buses_per_route):
                         bus_index = randint(0, len(route['coordinates']) - 1)
                         bus_id = generate_bus_id(route['name'], bus_index, emulator_id)
                         nursery.start_soon(
-                            run_bus, choice(send_channels), bus_id, route, refresh_timeout
+                            run_bus,
+                            send_channel,
+                            bus_id,
+                            route,
+                            refresh_timeout,
                         )
-                for receive_channel in receive_channels:
-                    nursery.start_soon(send_updates, server_address, receive_channel)
-
+                    nursery.start_soon(
+                        send_updates,
+                        server_address,
+                        receive_channel,
+                    )
         except OSError as ose:
             logger.warning('Connection attempt failed: %s' % ose, file=stderr)
 
