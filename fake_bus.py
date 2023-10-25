@@ -76,7 +76,7 @@ async def send_updates(server_address: str,
 @click.option('-s', '--server_address', default='ws://127.0.0.1:8080', help='Адрес сервера')
 @click.option('-r', '--routes_number', default=500, help='Кол-во маршрутов')
 @click.option('-b', '--buses_per_route', default=3, help='Кол-во автобусов на каждом маршруте')
-@click.option('-w', '--websockets_number', default=3, help='Кол-во открытых веб-сокетов')
+@click.option('-w', '--websockets_number', default=5, help='Кол-во открытых веб-сокетов')
 @click.option('-e', '--emulator_id', default='', help='Префикс к busId')
 @click.option('-t', '--refresh_timeout', default=1.0, help='Задержка в обновлении координат')
 @click.option('-l', '--log', is_flag=True, default=False, help='Настройка логирования')
