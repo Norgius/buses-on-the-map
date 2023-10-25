@@ -1,7 +1,8 @@
 import json
 import logging
-from typing import Union
-from dataclasses import dataclass, asdict
+from typing import Type
+from pydantic_core import PydanticCustomError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from contextlib import suppress
 
 import asyncclick as click
@@ -11,35 +12,23 @@ from trio_websocket import (serve_websocket,
                             WebSocketRequest,
                             WebSocketConnection)
 
-from custom_exceptions import (InvalidRouteError,
-                               MessageTypeError,
-                               InvalidCoordsError)
 
 logger = logging.getLogger(__name__)
 buses = {}
 
 
-@dataclass
-class Bus:
+class Bus(BaseModel):
     busId: str
-    lat: float
-    lng: float
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
     route: str
 
 
-@dataclass
-class WindowBounds:
-    south_lat: Union[float, None] = None
-    north_lat: Union[float, None] = None
-    west_lng: Union[float, None] = None
-    east_lng: Union[float, None] = None
-
-    def is_inside(self, lat, lng):
-        if self.south_lat is None:
-            return
-        if self.south_lat < lat < self.north_lat and \
-                self.west_lng < lng < self.east_lng:
-            return True
+class WindowBounds(BaseModel):
+    south_lat: float = Field(ge=-90, le=90)
+    north_lat: float = Field(ge=-90, le=90)
+    west_lng: float = Field(ge=-180, le=180)
+    east_lng: float = Field(ge=-180, le=180)
 
     def update(self, south_lat, north_lat, west_lng, east_lng):
         self.south_lat = south_lat
@@ -47,109 +36,72 @@ class WindowBounds:
         self.west_lng = west_lng
         self.east_lng = east_lng
 
+    def is_inside(self, bus: Type[Bus]) -> bool:
+        if self.south_lat < bus.lat < self.north_lat and \
+                self.west_lng < bus.lng < self.east_lng:
+            return True
 
-def check_bus_message(message: str) -> dict:
+
+class NewBoundsMessage(BaseModel):
+    msgType: str
+    data: WindowBounds
+
+    @field_validator('msgType')
+    @classmethod
+    def validate_msgtype(cls, data):
+        if data != 'newBounds':
+            raise PydanticCustomError(
+                'not is newBounds',
+                'value is not "newBounds", got "{wrong_value}"',
+                dict(wrong_value=data),
+            )
+        return data
+
+
+def check_bus_message(message: str) -> Type[Bus] | dict:
     try:
-        message = json.loads(message)
-        busId = message.get('busId')
-        if busId is None or not isinstance(busId, str):
-            raise MessageTypeError
-
-        route = message.get('route')
-        if route is None or not isinstance(route, str):
-            raise InvalidRouteError
-
-        valid_coords = {
-            'lat': (-90, 90),
-            'lng': (-180, 180),
-        }
-        for line, valid_coords in valid_coords.items():
-            coord_in_message = message.get(line)
-            if coord_in_message is None or \
-                    not isinstance(coord_in_message, (float, int)):
-                raise InvalidCoordsError
-            elif not valid_coords[0] <= coord_in_message <= valid_coords[1]:
-                raise InvalidCoordsError
-        return message
-
-    except json.JSONDecodeError:
-        logger.warning('JSONDecodeError')
-        return {'errors': ['Requires type JSON'], 'msgType': 'Errors'}
-    except InvalidCoordsError:
-        logger.warning('InvalidCoordsError')
-        return {'errors': ['Requires valid coords'], 'msgType': 'Errors'}
-    except InvalidRouteError:
-        logger.warning('InvalidRouteError')
-        return {'errors': ['Requires valid route'], 'msgType': 'Errors'}
-    except MessageTypeError:
-        logger.warning('MessageTypeError')
-        return {'errors': ['Requires busId specified'], 'msgType': 'Errors'}
+        bus = Bus.model_validate_json(message)
+        return bus
+    except ValidationError as err:
+        logger.warning('ValidationError')
+        return {'errors': [err.errors()], 'msgType': 'Errors'}
 
 
 async def receiving_server(request: WebSocketRequest):
-    ws = await request.accept()
+    ws: WebSocketConnection = await request.accept()
     while True:
         try:
             message = await ws.get_message()
-            message = check_bus_message(message)
-            if 'errors' in message:
-                await ws.send_message(json.dumps(message, ensure_ascii=False))
-                continue
-            bus = Bus(**message)
-            buses[bus.busId] = bus
+            checked_message: Type[Bus] | dict = check_bus_message(message)
+            if 'errors' in checked_message:
+                await ws.send_message(json.dumps(checked_message, ensure_ascii=False))
+            else:
+                buses[checked_message.busId] = checked_message
+                await ws.send_message(json.dumps({'msgType': 'Success', 'message': message}))
         except ConnectionClosed:
             logger.warning('Lost connection with bus data')
             break
 
 
-def check_browser_message(message: str) -> dict:
+def check_browser_message(message: str) -> Type[NewBoundsMessage] | dict:
     try:
-        message = json.loads(message)
-        msgType = message.get('msgType')
-        if msgType is None or msgType != 'newBounds':
-            raise MessageTypeError
-
-        message_data = message.get('data')
-        if message_data is None or not isinstance(message_data, dict):
-            raise InvalidCoordsError
-
-        coords_in_message = message.get('data')
-        valid_coords = {
-            'south_lat': (-90, 90),
-            'north_lat': (-90, 90),
-            'west_lng': (-180, 180),
-            'east_lng': (-180, 180),
-        }
-        for direction, valid_coords in valid_coords.items():
-            coord_in_message = coords_in_message.get(direction)
-            if coord_in_message is None or \
-                    not isinstance(coord_in_message, (float, int)):
-                raise InvalidCoordsError
-            elif not valid_coords[0] <= coord_in_message <= valid_coords[1]:
-                raise InvalidCoordsError
-        return message
-
-    except json.JSONDecodeError:
-        logger.warning('JSONDecodeError')
-        return {'errors': ['Requires type JSON'], 'msgType': 'Errors'}
-    except InvalidCoordsError:
-        logger.warning('InvalidCoordsError')
-        return {'errors': ['Requires valid coords'], 'msgType': 'Errors'}
-    except MessageTypeError:
-        logger.warning('MessageTypeError')
-        return {'errors': ['Requires msgType specified'], 'msgType': 'Errors'}
+        new_bounds_message = NewBoundsMessage.model_validate_json(message)
+        return new_bounds_message
+    except ValidationError as err:
+        logger.warning('ValidationError')
+        return {'errors': [err.errors()], 'msgType': 'Errors'}
 
 
 async def listen_browser(ws: WebSocketConnection, bounds: WindowBounds):
     while True:
         try:
             message = await ws.get_message()
-            message = check_browser_message(message)
-            if 'errors' in message:
-                await ws.send_message(json.dumps(message, ensure_ascii=False))
-                continue
-            bounds.update(*message.get('data').values())
-            logger.debug(message)
+            checked_message: Type[NewBoundsMessage] | dict = check_browser_message(message)
+            if 'errors' in checked_message:
+                await ws.send_message(json.dumps(checked_message, ensure_ascii=False))
+            else:
+                bounds.update(**checked_message.data.model_dump())
+                logger.debug(checked_message)
         except ConnectionClosed:
             break
 
@@ -158,10 +110,9 @@ async def send_buses(ws: WebSocketConnection, bounds: WindowBounds):
     while True:
         try:
             buses_on_screen = [
-                asdict(bus) for bus in buses.values()
-                if bounds.is_inside(bus.lat, bus.lng)
+                dict(bus) for bus in buses.values()
+                if bounds.is_inside(bus)
             ]
-
             past_bounds = bounds
             await trio.sleep(1)
             await ws.send_message(json.dumps(
@@ -178,7 +129,12 @@ async def send_buses(ws: WebSocketConnection, bounds: WindowBounds):
 
 async def server_for_browser(request: WebSocketRequest):
     ws = await request.accept()
-    bounds = WindowBounds()
+    bounds = WindowBounds(
+        south_lat=0,
+        north_lat=0,
+        west_lng=0,
+        east_lng=0
+    )
     async with trio.open_nursery() as nursery:
         nursery.start_soon(listen_browser, ws, bounds)
         nursery.start_soon(send_buses, ws, bounds)
